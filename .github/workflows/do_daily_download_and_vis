@@ -1,0 +1,19 @@
+name: Daily Data Download and Visualization
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'  #runs everyday at midnight
+
+jobs:
+  run-script:
+    runs-on: ubuntu-22.04
+    container:
+      image: eco4cast/rocker-neon4cast
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Run download and visualization R script
+        run: Rscript 01_daily_download_and_vis.R
