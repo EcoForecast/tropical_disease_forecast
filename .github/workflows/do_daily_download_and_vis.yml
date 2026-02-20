@@ -14,6 +14,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-
+        
+      - name: install R packages
+        run: R -e 'source("install.R")' 
+        
       - name: Run download and visualization R script
         run: Rscript 01_daily_download_and_vis.R

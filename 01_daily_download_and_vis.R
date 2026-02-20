@@ -3,7 +3,7 @@
 # Corresponds to 2/20/2026 "Pulling and Visualizing Data" Project Milestone
 
 #### part 1: load packages ####
-install.packages(readr)
+install.packages("readr")
 library(readr)
 
 #### part 2: bring in data ####
