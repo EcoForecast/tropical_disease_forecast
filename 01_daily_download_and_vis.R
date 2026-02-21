@@ -53,4 +53,4 @@ ciEnvelope(time, ylo, yhi) # add confidence interval
 lines(time, ymed, lwd = 2) # redraw median on top
 
 # add points to see observations outside the quantiles
-points(as.Date(disease_targets$datetime), disease_targets$observation, pch = 16, cex = 0.2)
+points(as.Date(disease_targets$datetime), disease_targets$observation)
