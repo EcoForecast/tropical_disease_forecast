@@ -9,7 +9,7 @@ library(readr)
 library(ggplot2)
 
 #### part 2: bring in data ####
-disease_url = 'https://minio-s3.apps.shift.nerc.mghpcc.org/bu4cast-ci-read/challenges/targets/project_id=bu4cast/tropical-disease-targets.csv'
+disease_url = 'https://minio-s3.apps.shift.nerc.mghpcc.org/bu4cast-ci-read/challenges/targets/project_id=bu4cast/forecasts/tropical-disease-targets.csv'
 
 disease_targets = read.csv(disease_url)
 
