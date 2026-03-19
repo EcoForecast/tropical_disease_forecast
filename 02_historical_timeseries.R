@@ -1,6 +1,6 @@
 # "02_historical_timeseries.R
 # Script for fitting historical data using Bayesian state-space model
-# Corresponds to 2/20/2026 "Pulling and Visualizing Data" Project Milestone
+# Corresponds to 3/20/2026 "Pulling and Visualizing Data" Project Milestone
 
 
 
@@ -13,8 +13,9 @@ disease_url = 'https://minio-s3.apps.shift.nerc.mghpcc.org/bu4cast-ci-read/chall
 
 disease_targets = read.csv(disease_url)
 
+# subset data to only Sao Paolo sites
 sp <- subset(disease_targets, site_id >= 350000 & site_id < 360000)  # SP = 35xxxx IBGE prefix
-sp_monthly <- aggregate(observation ~ datetime, data = sp, sum, na.rm = TRUE)
+sp_monthly <- aggregate(observation ~ datetime, data = sp, sum, na.rm = TRUE) #aggregate to monthly
 
 # Format input data
 time = as.Date(sp_monthly$datetime)
@@ -22,7 +23,7 @@ y = sp_monthly$observation
 
 plot(time, y, type='l', ylab="Cases", lwd=2)
 
-#### Define JAGS code ####
+#### Define models & priors as string to be passed into JAGS ####
 
 RandomWalk = "
 model{
@@ -64,7 +65,7 @@ data <- list(
 )
 
 # Define initial model state
-nchain = 3
+nchain = 3 # num. of MCMC chains
 init <- list()
 
 for(i in 1:nchain){
@@ -75,6 +76,7 @@ for(i in 1:nchain){
     r = 10   # starting guess for dispersion
   )
 }
+
 
 # Send info to JAGS
 j.model <- jags.model(
@@ -92,6 +94,7 @@ jags.out <- coda.samples(
   n.iter = 2000
 )
 
+#diagnostics
 plot(jags.out)
 dic.samples(j.model, 2000)
 
@@ -130,3 +133,7 @@ ecoforecastR::ciEnvelope(
 )
 
 points(time, y, pch="+", cex=0.5)
+
+
+# save MCMC output locally 
+# saveRDS(jags.out, file = "mcmc_output.rds")
