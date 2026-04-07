@@ -23,7 +23,7 @@ library(ecoforecastR)
 library(tidyverse)
 library(lubridate)
 library(arrow)
-# library(daymetr)
+library(daymetr)
 
 model_id       <- "BU_visceral_leishmaniacs"   #name for leaderboard,, can change
 forecast_date  <- Sys.Date()
@@ -123,31 +123,50 @@ sp_sites <- unique(sp$site_id)
 
 #### step 2: load historical met drivers  ####
 
+daymet0 <- download_daymet(site = "SaoPaulo", start = 2024, end = 2025, internal = TRUE)
+daymet <- daymet0$data
+
+# make date col
+daymet$date <- as.Date(paste(daymet$year, daymet$yday, sep = "-"), "%Y-%j")
+daymet$month <- as.Date(format(daymet$date, "%Y-%m-01"))
+
+#aggregate to monthly to match disease data
+tMin_monthly <- aggregate(daymet$tmin..deg.c., by = list(daymet$month), mean, na.rm = TRUE)
+tMax_monthly <- aggregate(daymet$tmax..deg.c., by = list(daymet$month), mean, na.rm = TRUE)
+precip_monthly <- aggregate(daymet$prcp..mm.day., by = list(daymet$month), sum, na.rm = TRUE)
+
+time_month <- as.Date(format(time, "%Y-%m-01"))
+
+# extract temp and precip data
+tMin <- tMin_monthly[,2][match(time_month, tMin_monthly[,1])]
+tMax <- tMax_monthly[,2][match(time_month, tMax_monthly[,1])]
+precip <- precip_monthly[,2][match(time_month, precip_monthly[,1])]
+
 # was going to use stage3 data (monthly, 30 ensembles) but it only has data from the past two months right now, so I have used the same daymet data that we used in the previous script as a placeholder right now...
 # heres the code I wouldve used to bring that data in tho 
 # s3 <- arrow::s3_bucket(paste0(drivers_path, "stage3/"), endpoint_override = s3_endpoint, anonymous = TRUE)
 # met_hist <- arrow::open_dataset(s3) |> filter(site_id %in% sp_sites) |> collect()
 
-time_month <- as.Date(format(time, "%Y-%m-01"))
-
-ds3 <- arrow::open_dataset(stage3_dir) |>
-  dplyr::filter(site_id %in% sp_sites) |>
-  dplyr::collect()
-
-met_s3 <- monthly_stage3(ds3, sp_sites)
-met_fit <- dplyr::filter(met_s3, .data$parameter == 0)
-tMax   <- met_fit$tMax[match(time_month, met_fit$month)]
-tMin   <- met_fit$tMin[match(time_month, met_fit$month)]
-precip <- met_fit$precip[match(time_month, met_fit$month)]
-
-# remove time points where climate data is unavailable
-hasData <- !is.na(tMax) & !is.na(tMin) & !is.na(precip)
-y      <- y[hasData]
-tMax   <- tMax[hasData]
-tMin   <- tMin[hasData]
-precip <- precip[hasData]
-time   <- time[hasData]
-n      <- length(y)
+# time_month <- as.Date(format(time, "%Y-%m-01"))
+# 
+# ds3 <- arrow::open_dataset(stage3_dir) |>
+#   dplyr::filter(site_id %in% sp_sites) |>
+#   dplyr::collect()
+# 
+# met_s3 <- monthly_stage3(ds3, sp_sites)
+# met_fit <- dplyr::filter(met_s3, .data$parameter == 0)
+# tMax   <- met_fit$tMax[match(time_month, met_fit$month)]
+# tMin   <- met_fit$tMin[match(time_month, met_fit$month)]
+# precip <- met_fit$precip[match(time_month, met_fit$month)]
+# 
+# # remove time points where climate data is unavailable
+# hasData <- !is.na(tMax) & !is.na(tMin) & !is.na(precip)
+# y      <- y[hasData]
+# tMax   <- tMax[hasData]
+# tMin   <- tMin[hasData]
+# precip <- precip[hasData]
+# time   <- time[hasData]
+# n      <- length(y)
 
 # met_hist <- arrow::open_dataset(s3) |> filter(site_id %in% sp_sites) |> collect()
 
@@ -198,10 +217,20 @@ s2 <- ds2 |>
   dplyr::collect()
 met_stage2_monthly <- monthly_stage2(s2, sp_sites)
 
+# Filter data
+hasData <- !is.na(tMax) & !is.na(tMin) & !is.na(precip)
+y       <- y[hasData]
+tMax    <- tMax[hasData]
+tMin    <- tMin[hasData]
+precip  <- precip[hasData]
+time    <- time[hasData]
+pop_scaled <- pop_scaled[hasData]
+n       <- length(y)
+
 #### step 5: fit model to current data ####
 
 # data list for JAGS
-data <- list(
+jags_data <- list(
   y      = as.integer(y),
   n      = n,
   tMax   = tMax,
@@ -260,7 +289,7 @@ for(i in 1:nchain){
 # Send info to JAGS
 j.model <- jags.model(
   file = textConnection(StateSpace),
-  data = data,
+  data = jags_data,
   inits = init,
   n.chains = nchain)
 
@@ -272,14 +301,14 @@ jags.out <- coda.samples(
 
 # diagnostics
 plot(jags.out)
-dic.samples(j.model, 2000)
+# dic.samples(j.model, 2000)
 
 # full sample 
 jags.out <- coda.samples(
   model = j.model,
   variable.names = c("x",
                      "alpha", "phi",
-                     "beta_tMax", "beta_tMin", 
+                     "beta_tMax", "beta_tMin",
                      "beta_precip", "beta_pop",
                      "tau_add", "r"),
   n.iter = 10000)
@@ -307,7 +336,7 @@ params <- out[idx, ]          # matching parameter samples for each ensemble mem
 
 # future months to forecast
 future_months <- seq(
-  from = as.Date(format(reference_date, "%Y-%m-01")),
+  from = max(time) %m+% months(1),
   by = "month",
   length.out = horizon)
 
@@ -317,17 +346,17 @@ future_months <- seq(
 met_param <- (seq_len(n_ensemble) - 1L) %% 31L
 mo <- as.Date(format(future_months,"%Y-%m-01"))
 
-tMax_future <- matrix(NA, nrow = horizon, ncol = n_ensemble)
-tMin_future <- matrix(NA, nrow = horizon, ncol = n_ensemble)
-precip_future <- matrix(NA, nrow = horizon, ncol = n_ensemble)
+tMax_future   <- matrix(mean(tail(tMax, 12)),   nrow = horizon, ncol = n_ensemble)
+tMin_future   <- matrix(mean(tail(tMin, 12)),   nrow = horizon, ncol = n_ensemble)
+precip_future <- matrix(mean(tail(precip, 12)), nrow = horizon, ncol = n_ensemble)
 
-for (e in seq_len(n_ensemble)) {
-  sub <- dplyr::filter(met_stage2_monthly, .data$parameter == met_param[e])
-  m <- match(mo, sub$month)
-  tMax_future[, e]   <- sub$TMAX[m]
-  tMin_future[, e]   <- sub$TMIN[m]
-  precip_future[, e] <- sub$APCP[m]
-}
+# for (e in seq_len(n_ensemble)) {
+#   sub <- dplyr::filter(met_stage2_monthly, .data$parameter == met_param[e])
+#   m <- match(mo, sub$month)
+#   tMax_future[, e]   <- sub$TMAX[m]
+#   tMin_future[, e]   <- sub$TMIN[m]
+#   precip_future[, e] <- sub$APCP[m]
+# }
 # get future population
 pop_future <- pop_sp$pop_est[match(as.integer(format(future_months, "%Y")), pop_sp$year)] / 1e6
 
@@ -337,19 +366,20 @@ y_fc <- matrix(NA, nrow = horizon, ncol = n_ensemble)  # predicted cases
 
 # run forecast for each ensemble member
 for(e in 1:n_ensemble){
-  # ar(1) from IC for every forecast month: x_T is state BEFORE first lead time
-  x_prev <- x_T[e] 
-  for (t in seq_len(horizon)) {
+  
+  x_prev <- x_T[e]        # ← initialize x_prev to the IC for this member
+  x_fc[1, e] <- x_prev    # store it in the matrix too
+  
+  for(t in 2:horizon){
     mu_proc <- params[e, "alpha"] +
-      params[e, "phi"] * x_prev +
-      params[e, "beta_tMax"] * tMax_future[t, e] +
-      params[e, "beta_tMin"] * tMin_future[t, e] +
+      params[e, "phi"] * x_prev +          # ← now correctly uses previous state
+      params[e, "beta_tMax"]   * tMax_future[t, e] +
+      params[e, "beta_tMin"]   * tMin_future[t, e] +
       params[e, "beta_precip"] * precip_future[t, e] +
-      params[e, "beta_pop"] * pop_future[t]
-   
-    # add process error
-    x_fc[t, e] <- rnorm(1, mu_proc, sd = 1 /sqrt(params[e, "tau_add"]))
-    x_prev <- x_fc[t, e] 
+      params[e, "beta_pop"]    * pop_future[t]
+    
+    x_fc[t, e] <- rnorm(1, mu_proc, sd = 1/sqrt(params[e, "tau_add"]))
+    x_prev <- x_fc[t, e]   # ← carry state forward
   }
   
   # observation model -- convert latent state to predicted cases
@@ -384,7 +414,47 @@ for(e in 1:n_ensemble){
 #   prediction         = as.vector(t(y_fc))
 # )
 
+#### step 8b: visualize fitted values + forecast with CIs ####
 
+# extract fitted latent states
+x_fitted_cols <- matrix(out[idx, grep("^x\\[", colnames(out))], nrow = n_ensemble)
+mu_fitted <- exp(x_fitted_cols)
+
+# compute quantiles
+fitted_ci  <- apply(mu_fitted, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+forecast_ci <- apply(y_fc, 1, quantile, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+
+# build plot data frames
+fitted_df <- tibble(
+  month  = time,
+  lo     = fitted_ci["2.5%",],
+  median = fitted_ci["50%",],
+  hi     = fitted_ci["97.5%",],
+  obs    = y
+)
+
+forecast_df <- tibble(
+  month  = future_months,
+  lo     = forecast_ci["2.5%",],
+  median = forecast_ci["50%",],
+  hi     = forecast_ci["97.5%",]
+)
+
+# plot
+# zoom to last year of historical + forecast
+last_year_start <- max(time) %m-% months(12)
+
+fitted_zoom <- filter(fitted_df, month >= last_year_start)
+
+ggplot() +
+  geom_ribbon(data = fitted_zoom, aes(x = month, ymin = lo, ymax = hi), fill = "steelblue", alpha = 0.3) +
+  geom_line(data = fitted_zoom, aes(x = month, y = median), color = "steelblue", linewidth = 0.8) +
+  geom_point(data = fitted_zoom, aes(x = month, y = obs), color = "black", size = 1.5) +
+  geom_ribbon(data = forecast_df, aes(x = month, ymin = lo, ymax = hi), fill = "tomato", alpha = 0.3) +
+  geom_line(data = forecast_df, aes(x = month, y = median), color = "tomato", linewidth = 1) +
+  geom_vline(xintercept = as.numeric(max(time)), linetype = "dashed", color = "grey40") +
+  labs(title = "VL Forecast — São Paulo (last 12 months + forecast)", x = "Month", y = "Cases") +
+  theme_bw()
 
 #### step 9: write forecast file and submit ####
 
@@ -415,3 +485,6 @@ file.exists(forecast_file) # did it work?
 
 # upload file
 #aws.s3::put_object(file = forecast_file, object = forecast_file, bucket = "bu4cast-ci-write",region = "", base_url = s3_endpoint)
+
+cat("n:", n, "\n")
+cat("class n:", class(n), "\n")
