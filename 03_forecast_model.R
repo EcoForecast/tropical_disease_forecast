@@ -54,7 +54,7 @@ site_names <- c(
 )
 
 # data asimilation holdout period: one step per month
-assimilation_months <- seq(as.Date("2024-08-01"), as.Date("2025-07-01"), by = "month")
+assimilation_months <- seq(as.Date("2024-08-01"), as.Date("2025-12-01"), by = "month")
 
 # helper function to get monthly forecast met from stage2
 monthly_met_future <- function(raw, model_site_id) {
@@ -214,6 +214,8 @@ for (end_date in as.list(assimilation_months)) {
     jags.out <- coda.samples(j.model,
                              c("x", "alpha", "phi", "beta_temp", "beta_precip", "beta_pop", "tau_add", "r"),
                              n.iter = 10000)
+    #COMMENT THIS OUT WHEN WANTING TO SAVE MEMORY
+    #saveRDS(jags.out, file = paste0("mcmc_", site, ".rds"))
     out <- as.matrix(jags.out)
     
     #### initial conditions from last fitted state ####
@@ -358,4 +360,10 @@ ggsave("figures/forecast_all_sites.png", plot = panel, width = 14, height = 20, 
 print(panel)
 
 #### step 6: submit ####
-aws.s3::put_object(file     = forecast_file, object   = forecast_file, bucket   = "bu4cast-ci-write",region   = "",base_url = s3_endpoint)
+aws.s3::put_object(
+  file     = forecast_file,
+  object   = paste0("challenges/project_id=bu4cast/submissions/", forecast_file),
+  bucket   = "bu4cast-ci-write",
+  region   = "",
+  base_url = s3_endpoint
+)
